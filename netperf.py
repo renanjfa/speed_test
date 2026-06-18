@@ -5,10 +5,16 @@ TAMANHO_PACOTE = 500
 BASE_STRING = "teste de rede 2026"
 DURACAO = 20
 HOST = '0.0.0.0'
+MARCADOR_FIM = b'\xff\xff\xff\xff'
 
 
 def construir_pacote(seq_num):
     conteudo = f"{seq_num}|{BASE_STRING}|".encode('utf-8')
+    return conteudo.ljust(TAMANHO_PACOTE, b'\x00')[:TAMANHO_PACOTE]
+
+
+def construir_pacote_fim(total_enviados):
+    conteudo = MARCADOR_FIM + str(total_enviados).encode('utf-8')
     return conteudo.ljust(TAMANHO_PACOTE, b'\x00')[:TAMANHO_PACOTE]
 
 
@@ -56,7 +62,7 @@ def sender_tcp(host, porta):
         seq += 1
         bytes_enviados += TAMANHO_PACOTE
 
-    sock.sendall(b'FIM!'.ljust(TAMANHO_PACOTE, b'\x00'))
+    sock.sendall(construir_pacote_fim(seq))
     tempo = time.time() - inicio
 
     try:
@@ -96,12 +102,13 @@ def receiver_tcp(porta):
             pacote = buffer[:TAMANHO_PACOTE]
             buffer = buffer[TAMANHO_PACOTE:]
 
-            if b'FIM!' in pacote:
+            if pacote[:4] == MARCADOR_FIM:
+                total_env = int(pacote[4:].rstrip(b'\x00').decode())
                 conn.sendall(str(pacotes).encode())
                 tempo = time.time() - inicio if inicio else DURACAO
                 conn.close()
                 server.close()
-                mostrar_metricas("RELATÓRIO TCP - RECEIVER", pacotes, pacotes, bytes_recebidos, tempo)
+                mostrar_metricas("RELATÓRIO TCP - RECEIVER", total_env, pacotes, bytes_recebidos, tempo)
                 return
 
             if inicio is None:
@@ -131,9 +138,9 @@ def sender_udp(host, porta):
         seq += 1
         bytes_enviados += TAMANHO_PACOTE
 
-    for _ in range(5):
-        fim = f"FIM!|{seq}|".encode().ljust(TAMANHO_PACOTE, b'\x00')
-        sock.sendto(fim, destino)
+    for _ in range(10):
+        sock.sendto(construir_pacote_fim(seq), destino)
+        time.sleep(0.01)
 
     sock.close()
     tempo = time.time() - inicio
@@ -154,10 +161,9 @@ def receiver_udp(porta):
     while True:
         data, addr = sock.recvfrom(TAMANHO_PACOTE + 100)
 
-        if b'FIM!' in data:
+        if data[:4] == MARCADOR_FIM:
             try:
-                partes = data.rstrip(b'\x00').decode().split('|')
-                pacotes_enviados = int(partes[1])
+                pacotes_enviados = int(data[4:].rstrip(b'\x00').decode())
             except Exception:
                 pacotes_enviados = pacotes
             break
