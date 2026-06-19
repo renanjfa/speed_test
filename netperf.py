@@ -6,6 +6,7 @@ BASE_STRING = "teste de rede 2026"
 DURACAO = 20
 HOST = '0.0.0.0'
 MARCADOR_FIM = b'\xff\xff\xff\xff'
+REPETICOES = 3
 
 
 def construir_pacote(seq_num):
@@ -45,6 +46,16 @@ def mostrar_metricas(titulo, pacotes_env, pacotes_rec, bytes_total, tempo):
     print(f"  Duração:               {tempo:.2f}s")
     print(f"{'='*50}")
 
+    return {
+        'pacotes_env': pacotes_env,
+        'pacotes_rec': pacotes_rec,
+        'perdidos': perdidos,
+        'bytes': bytes_total,
+        'pac_por_seg': pac_por_seg,
+        'bits_por_seg': bits_por_seg,
+        'tempo': tempo,
+    }
+
 
 # ── TCP ──────────────────────────────────────────────
 
@@ -73,7 +84,7 @@ def sender_tcp(host, porta):
         pacotes_recebidos = seq
 
     sock.close()
-    mostrar_metricas("RELATÓRIO TCP - SENDER", seq, pacotes_recebidos, bytes_enviados, tempo)
+    return mostrar_metricas("RELATÓRIO TCP - SENDER", seq, pacotes_recebidos, bytes_enviados, tempo)
 
 
 def receiver_tcp(porta):
@@ -108,8 +119,7 @@ def receiver_tcp(porta):
                 tempo = time.time() - inicio if inicio else DURACAO
                 conn.close()
                 server.close()
-                mostrar_metricas("RELATÓRIO TCP - RECEIVER", total_env, pacotes, bytes_recebidos, tempo)
-                return
+                return mostrar_metricas("RELATÓRIO TCP - RECEIVER", total_env, pacotes, bytes_recebidos, tempo)
 
             if inicio is None:
                 inicio = time.time()
@@ -119,7 +129,7 @@ def receiver_tcp(porta):
     tempo = time.time() - inicio if inicio else DURACAO
     conn.close()
     server.close()
-    mostrar_metricas("RELATÓRIO TCP - RECEIVER", pacotes, pacotes, bytes_recebidos, tempo)
+    return mostrar_metricas("RELATÓRIO TCP - RECEIVER", pacotes, pacotes, bytes_recebidos, tempo)
 
 
 # ── UDP ──────────────────────────────────────────────
@@ -144,8 +154,7 @@ def sender_udp(host, porta):
 
     sock.close()
     tempo = time.time() - inicio
-    mostrar_metricas("RELATÓRIO UDP - SENDER", seq, seq, bytes_enviados, tempo)
-    print(f"  (Pacotes perdidos serão calculados no receiver)")
+    return mostrar_metricas("RELATÓRIO UDP - SENDER", seq, seq, bytes_enviados, tempo)
 
 
 def receiver_udp(porta):
@@ -175,7 +184,31 @@ def receiver_udp(porta):
 
     tempo = time.time() - inicio if inicio else DURACAO
     sock.close()
-    mostrar_metricas("RELATÓRIO UDP - RECEIVER", pacotes_enviados, pacotes, bytes_recebidos, tempo)
+    return mostrar_metricas("RELATÓRIO UDP - RECEIVER", pacotes_enviados, pacotes, bytes_recebidos, tempo)
+
+
+# ── TABLA RESUMEN ────────────────────────────────────
+
+def mostrar_resumen(resultados, proto, rede, modo):
+    print(f"\n{'='*70}")
+    print(f"  TABELA COMPARATIVA - {proto.upper()} / {rede.upper()} / {modo.upper()}")
+    print(f"{'='*70}")
+    print(f"  {'Test':<6} {'Enviados':>12} {'Recebidos':>12} {'Perdidos':>10} {'Bytes':>14} {'Pac/s':>10} {'Velocidade':>14}")
+    print(f"  {'-'*64}")
+
+    for i, r in enumerate(resultados, 1):
+        print(f"  {i:<6} {r['pacotes_env']:>12,} {r['pacotes_rec']:>12,} {r['perdidos']:>10,} {r['bytes']:>14,} {r['pac_por_seg']:>10,.0f} {format_velocidade(r['bits_por_seg']):>14}")
+
+    avg_env = sum(r['pacotes_env'] for r in resultados) // len(resultados)
+    avg_rec = sum(r['pacotes_rec'] for r in resultados) // len(resultados)
+    avg_per = sum(r['perdidos'] for r in resultados) // len(resultados)
+    avg_byt = sum(r['bytes'] for r in resultados) // len(resultados)
+    avg_pac = sum(r['pac_por_seg'] for r in resultados) / len(resultados)
+    avg_bit = sum(r['bits_por_seg'] for r in resultados) / len(resultados)
+
+    print(f"  {'-'*64}")
+    print(f"  {'MÉDIA':<6} {avg_env:>12,} {avg_rec:>12,} {avg_per:>10,} {avg_byt:>14,} {avg_pac:>10,.0f} {format_velocidade(avg_bit):>14}")
+    print(f"{'='*70}")
 
 
 # ── MENÚ ─────────────────────────────────────────────
@@ -186,6 +219,22 @@ def pedir_protocolo():
         if p in ('tcp', 'udp'):
             return p
         print("  Inválido. Digite 'tcp' ou 'udp'.")
+
+
+def pedir_modo():
+    while True:
+        m = input("  Modo (sender/receiver): ").strip().lower()
+        if m in ('sender', 'receiver'):
+            return m
+        print("  Inválido. Digite 'sender' ou 'receiver'.")
+
+
+def pedir_rede():
+    while True:
+        r = input("  Rede (cabo/wifi): ").strip().lower()
+        if r in ('cabo', 'wifi'):
+            return r
+        print("  Inválido. Digite 'cabo' ou 'wifi'.")
 
 
 def pedir_ip():
@@ -212,8 +261,7 @@ def main():
         print(f"\n{'='*50}")
         print("  FERRAMENTA DE TESTE DE DESEMPENHO DE REDE")
         print(f"{'='*50}")
-        print("  1) Sender  (enviar pacotes)")
-        print("  2) Receiver (receber pacotes)")
+        print("  1) Executar bateria de 3 testes")
         print("  0) Sair")
         opcao = input("  Escolha: ").strip()
 
@@ -223,28 +271,44 @@ def main():
 
         elif opcao == '1':
             proto = pedir_protocolo()
-            ip = pedir_ip()
+            modo = pedir_modo()
+            rede = pedir_rede()
             porta = pedir_porta()
-            try:
-                if proto == 'tcp':
-                    sender_tcp(ip, porta)
-                else:
-                    sender_udp(ip, porta)
-            except ConnectionRefusedError:
-                print("  [ERRO] Conexão recusada. O receiver está escutando?")
-            except Exception as e:
-                print(f"  [ERRO] {e}")
 
-        elif opcao == '2':
-            proto = pedir_protocolo()
-            porta = pedir_porta()
-            try:
-                if proto == 'tcp':
-                    receiver_tcp(porta)
-                else:
-                    receiver_udp(porta)
-            except OSError as e:
-                print(f"  [ERRO] {e}")
+            ip = None
+            if modo == 'sender':
+                ip = pedir_ip()
+
+            resultados = []
+
+            for i in range(1, REPETICOES + 1):
+                print(f"\n{'#'*50}")
+                print(f"  TESTE {i}/{REPETICOES} - {proto.upper()} / {rede.upper()} / {modo.upper()}")
+                print(f"{'#'*50}")
+
+                try:
+                    if modo == 'sender':
+                        if proto == 'tcp':
+                            r = sender_tcp(ip, porta)
+                        else:
+                            r = sender_udp(ip, porta)
+                    else:
+                        if proto == 'tcp':
+                            r = receiver_tcp(porta)
+                        else:
+                            r = receiver_udp(porta)
+                    resultados.append(r)
+                except ConnectionRefusedError:
+                    print("  [ERRO] Conexão recusada. O outro lado está escutando?")
+                except Exception as e:
+                    print(f"  [ERRO] {e}")
+
+                if i < REPETICOES:
+                    print(f"\n  Próximo teste em 3 segundos...")
+                    time.sleep(3)
+
+            if resultados:
+                mostrar_resumen(resultados, proto, rede, modo)
 
         else:
             print("  Opção inválida.")
